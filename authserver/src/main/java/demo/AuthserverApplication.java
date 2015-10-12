@@ -8,6 +8,7 @@ import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.annotation.Order;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.config.annotation.authentication.builders.AuthenticationManagerBuilder;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
@@ -28,7 +29,7 @@ import org.springframework.web.bind.annotation.RestController;
 @SpringBootApplication
 @RestController
 @Configuration
-public class AuthserverApplication extends WebSecurityConfigurerAdapter {
+public class AuthserverApplication {
 
 	private static final String RESOURCE_ID = "restservice";
 
@@ -39,94 +40,87 @@ public class AuthserverApplication extends WebSecurityConfigurerAdapter {
 
 	@Autowired
 	private CustomUserDetailsService userDetailsService;
-	
-	@Override
-	protected void configure(AuthenticationManagerBuilder auth) throws Exception {
-		 auth.userDetailsService(userDetailsService);
+
+	@Autowired
+	public void authentication(AuthenticationManagerBuilder auth) throws Exception {
+		auth.userDetailsService(userDetailsService);
 	}
 
 	public static void main(String[] args) {
 		SpringApplication.run(AuthserverApplication.class, args);
 	}
 
-	@Override
-	@Bean
-	public AuthenticationManager authenticationManagerBean() throws Exception {
-		return super.authenticationManagerBean();
-	}
-	
 	@Bean
 	public InMemoryTokenStore inMemoryTokenStoreBean() {
 		return new InMemoryTokenStore();
 	}
-	
+
+	// Security for login and oauth UI elements. Ordered between the auth server and
+	// resource server. (Not needed if we use default basic auth from Spring Boot.)
 	@Configuration
-	@EnableResourceServer
-	protected static class ResourceServerConfiguration extends ResourceServerConfigurerAdapter {
-		
-		@Autowired
-        @Qualifier("authenticationManagerBean")
-        private AuthenticationManager authenticationManager;
+	@Order(1)
+	protected static class LoginConfiguration extends WebSecurityConfigurerAdapter {
 
 		@Override
-		public void configure(ResourceServerSecurityConfigurer resources) throws Exception {
+		public void configure(HttpSecurity http) throws Exception {
+			http.requestMatchers().antMatchers("/login", "/oauth/**").and().formLogin()
+					.permitAll().and().authorizeRequests().anyRequest().authenticated();
+		}
+
+	}
+
+	@Configuration
+	@EnableResourceServer
+	protected static class ResourceServerConfiguration
+			extends ResourceServerConfigurerAdapter {
+
+		@Override
+		public void configure(ResourceServerSecurityConfigurer resources)
+				throws Exception {
 			// @formatter:off
 			resources
 				.resourceId(RESOURCE_ID);
-			resources
-				.authenticationManager(authenticationManager);
 			// @formatter:on
 		}
 
 		@Override
 		public void configure(HttpSecurity http) throws Exception {
-			// @formatter:off
-			http.setSharedObject(AuthenticationManager.class, authenticationManager);
-			http.csrf().disable();
-			http.httpBasic().disable();
-			http.formLogin().permitAll();
-			http
-				.anonymous()
-				.and()
-				.authorizeRequests()
-				.antMatchers("/login", "/oauth/**").permitAll()
-				.anyRequest().authenticated();
-			// @formatter:on
+			http.authorizeRequests().anyRequest().authenticated();
 		}
 
 	}
-	
+
 	@Configuration
 	@EnableAuthorizationServer
 	protected static class OAuth2Config extends AuthorizationServerConfigurerAdapter {
 
 		@Autowired
-		@Qualifier("authenticationManagerBean")
 		private AuthenticationManager authenticationManager;
-		
+
 		@Autowired
 		@Qualifier("inMemoryTokenStoreBean")
 		private TokenStore tokenStore;
-		
+
 		@Override
-		public void configure(AuthorizationServerSecurityConfigurer security) throws Exception {
-			security.checkTokenAccess("permitAll()").allowFormAuthenticationForClients();
+		public void configure(AuthorizationServerSecurityConfigurer security)
+				throws Exception {
+			security.checkTokenAccess("authenticated()")
+					.allowFormAuthenticationForClients();
 		}
 
 		@Override
-		public void configure(AuthorizationServerEndpointsConfigurer endpoints) throws Exception {
+		public void configure(AuthorizationServerEndpointsConfigurer endpoints)
+				throws Exception {
 			endpoints.tokenStore(tokenStore).authenticationManager(authenticationManager);
 		}
-		
+
 		@Override
 		public void configure(ClientDetailsServiceConfigurer clients) throws Exception {
-			clients.inMemory()
-					.withClient("acme")
-					.secret("acmesecret")
+			clients.inMemory().withClient("acme").secret("acmesecret")
 					.resourceIds(RESOURCE_ID)
-					.authorities("USER")
-					.authorizedGrantTypes("authorization_code", "refresh_token",
-							"password").scopes("read","write").autoApprove(true);
+					.authorities("USER").authorizedGrantTypes("authorization_code",
+							"refresh_token", "password")
+					.scopes("read", "write").autoApprove(true);
 		}
 
 	}
